@@ -159,6 +159,7 @@ def _parse_card_text(text: str) -> dict:
     if kv_addr:
         result["address_line1"] = kv_addr
         if kv_city:
+            result["address_city"] = kv_city
             result["address_state"] = kv_state or kv_city
         elif kv_state:
             result["address_state"] = kv_state
@@ -493,16 +494,19 @@ with cfg_col2:
         if "w_currency" not in st.session_state:
             st.session_state["w_currency"] = default_currency
         currency = bc2.text_input("货币", key="w_currency")
-        bc3, bc4, bc5 = st.columns(3)
+        bc3, bc4, bc5, bc6 = st.columns(4)
         if "w_address_line1" not in st.session_state:
             st.session_state["w_address_line1"] = default_addr
+        if "w_address_city" not in st.session_state:
+            st.session_state["w_address_city"] = ""
         if "w_address_state" not in st.session_state:
             st.session_state["w_address_state"] = default_state
         if "w_postal_code" not in st.session_state:
             st.session_state["w_postal_code"] = default_zip
         address_line1 = bc3.text_input("地址", key="w_address_line1")
-        address_state = bc4.text_input("州/省", key="w_address_state")
-        postal_code = bc5.text_input("邮编", key="w_postal_code")
+        address_city = bc4.text_input("城市", key="w_address_city")
+        address_state = bc5.text_input("州/省", key="w_address_state")
+        postal_code = bc6.text_input("邮编", key="w_postal_code")
 
 if do_payment:
     with st.expander("粘贴卡片信息 (自动识别)", expanded=True):
@@ -526,6 +530,8 @@ if do_payment:
                 pending["w_card_cvc"] = parsed["cvv"]
             if parsed.get("address_line1"):
                 pending["w_address_line1"] = parsed["address_line1"]
+            if parsed.get("address_city"):
+                pending["w_address_city"] = parsed["address_city"]
             if parsed.get("address_state"):
                 pending["w_address_state"] = parsed["address_state"]
             if parsed.get("postal_code"):
@@ -789,6 +795,8 @@ with tab_run:
                         billing_country=country_code,
                         billing_zip=postal_code,
                         billing_line1=address_line1,
+                        billing_city=address_city,
+                        billing_state=address_state,
                         billing_email=auth_result.email,
                         billing_currency=currency,
                         chatgpt_proxy=cfg.proxy,

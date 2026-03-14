@@ -1030,45 +1030,504 @@ class BrowserPayment:
     def _fill_stripe_elements(self, page, card_number, exp_month, exp_year, cvc):
         """
         填写 Stripe Elements iframe 中的卡信息。
-        Stripe Elements 使用虚拟输入 - 可见区域是 div/span, 实际 input 是 hidden。
-        必须点击 iframe 可见区域获得焦点后用 keyboard.type。
+        方式: 找到 payment iframe 的 DOM 元素 → 滚动到可见 → 点击 → page.keyboard 输入
+        Stripe 的 unified Payment Element 中: 点击 iframe 进入卡号字段,
+        卡号完成后自动跳转到到期日, 到期日完成后自动跳转到 CVC。
         """
-        # 找到 3 个 Element iframe (按 DOM 顺序: 卡号, 到期, CVC)
-        iframe_elements = page.query_selector_all('div.element-container iframe, #card-number iframe, #card-expiry iframe, #card-cvc iframe')
-        if len(iframe_elements) < 3:
-            # 备用: 查找所有 Stripe Element iframe
-            iframe_elements = page.query_selector_all('iframe[name*="__privateStripeFrame"]')
-            logger.info(f"[Browser] 找到 {len(iframe_elements)} 个 Stripe iframe (fallback)")
+        exp_yy = exp_year[-2:] if len(exp_year) == 4 else exp_year
+        exp_str = f"{exp_month}{exp_yy}"
 
-        # 过滤: 只保留有可见区域的 iframe
+        # 找到 payment iframe 的 DOM 元素
+        payment_iframe_el = None
+        for iframe_el in page.query_selector_all('iframe[name*="__privateStripeFrame"]'):
+            box = iframe_el.bounding_box()
+            if not box or box["height"] < 30:
+                continue
+            # 检查 iframe 的 URL 包含 payment
+            frame_obj = iframe_el.content_frame()
+            if frame_obj and "elements-inner-payment" in frame_obj.url:
+                payment_iframe_el = iframe_el
+                break
+            # 如果 content_frame 不可用, 按尺寸判断 (payment iframe 通常高度 < 200)
+            if not payment_iframe_el and box["height"] < 200 and box["width"] > 200:
+                payment_iframe_el = iframe_el
+
+        if payment_iframe_el:
+            payment_iframe_el.scroll_into_view_if_needed()
+            time.sleep(0.3)
+            box = payment_iframe_el.bounding_box()
+            if box:
+                logger.info(f"[Browser] Payment iframe: {box['width']:.0f}x{box['height']:.0f} at ({box['x']:.0f},{box['y']:.0f})")
+                # 点击 iframe 左上区域 (卡号输入框在最上方)
+                page.mouse.click(box["x"] + 80, box["y"] + 25)
+                time.sleep(0.5)
+                # 清空
+                for _ in range(3):
+                    page.keyboard.press("Control+a")
+                    page.keyboard.press("Backspace")
+
+                page.keyboard.type(card_number, delay=random.randint(50, 100))
+                logger.info("[Browser] 已输入卡号")
+                time.sleep(0.8)
+
+                # Stripe 自动跳转到 expiry (不需要 Tab)
+                page.keyboard.type(exp_str, delay=random.randint(50, 100))
+                logger.info("[Browser] 已输入到期日")
+                time.sleep(0.5)
+
+                # Stripe 自动跳转到 CVC (不需要 Tab)
+                page.keyboard.type(cvc, delay=random.randint(50, 100))
+                logger.info("[Browser] 已输入 CVC")
+                return
+
+        # 后备: 使用所有可见 iframe 中第一个
+        iframe_elements = page.query_selector_all('iframe[name*="__privateStripeFrame"]')
         visible_iframes = []
         for iframe_el in iframe_elements:
             box = iframe_el.bounding_box()
-            if box and box["width"] > 50 and box["height"] > 10:
+            if box and box["width"] > 50 and box["height"] > 30:
                 visible_iframes.append((iframe_el, box))
-        logger.info(f"[Browser] 可见 iframe 数量: {len(visible_iframes)}")
+        logger.info(f"[Browser] 后备模式: {len(visible_iframes)} 个可见 iframe")
 
-        def type_into_iframe(iframe_info, value, field_name):
-            iframe_el, box = iframe_info
-            # 点击 iframe 中心位置
-            cx = box["x"] + box["width"] / 2
-            cy = box["y"] + box["height"] / 2
-            page.mouse.click(cx, cy)
-            time.sleep(random.uniform(0.3, 0.5))
-
-            # 使用 page keyboard (事件会发送到当前 focused iframe)
-            page.keyboard.type(value, delay=random.randint(60, 120))
-            logger.info(f"[Browser] 已输入 {field_name}")
-            time.sleep(random.uniform(0.3, 0.6))
-
-        if len(visible_iframes) >= 3:
-            # 按顺序: 卡号(0), 到期(1), CVC(2)
-            type_into_iframe(visible_iframes[0], card_number, "卡号")
-            exp_yy = exp_year[-2:] if len(exp_year) == 4 else exp_year
-            type_into_iframe(visible_iframes[1], f"{exp_month}{exp_yy}", "到期日")
-            type_into_iframe(visible_iframes[2], cvc, "CVC")
+        if len(visible_iframes) >= 1:
+            iframe_el, box = visible_iframes[0]
+            page.mouse.click(box["x"] + 80, box["y"] + 25)
+            time.sleep(0.5)
+            page.keyboard.type(card_number, delay=random.randint(50, 100))
+            logger.info("[Browser] 已输入卡号")
+            time.sleep(0.8)
+            page.keyboard.type(exp_str, delay=random.randint(50, 100))
+            logger.info("[Browser] 已输入到期日")
+            time.sleep(0.5)
+            page.keyboard.type(cvc, delay=random.randint(50, 100))
+            logger.info("[Browser] 已输入 CVC")
         else:
-            logger.error(f"[Browser] 可见 Stripe iframe 不足 3 个, 无法填写卡信息")
+            logger.error("[Browser] 未找到可见 Stripe iframe")
+
+    def _fill_stripe_address(self, page, billing_name: str, billing_line1: str,
+                             billing_zip: str, billing_country: str,
+                             billing_city: str = "", billing_state: str = ""):
+        """
+        填写 Stripe Address Element iframe 中的账单地址。
+        Stripe Address Element 布局分两阶段:
+        1) 初始: name, country, addressLine1 可见
+        2) 填写 addressLine1 后触发 reflow: city, state, zip 变为可见
+        """
+        # 找到 Address Element iframe DOM 元素
+        address_iframe_el = None
+        address_frame = None
+        for iframe_el in page.query_selector_all('iframe[name*="__privateStripeFrame"]'):
+            box = iframe_el.bounding_box()
+            if not box or box["height"] < 30:
+                continue
+            frame_obj = iframe_el.content_frame()
+            if frame_obj and "elements-inner-address" in frame_obj.url:
+                address_iframe_el = iframe_el
+                address_frame = frame_obj
+                break
+
+        if not address_iframe_el or not address_frame:
+            logger.warning("[Checkout] 未找到 Address Element iframe")
+            return
+
+        def _click_and_type(selector, value, label):
+            """通过绝对坐标点击 + page.keyboard 输入 (含 iframe 内滚动)"""
+            # 先在 iframe 内部将目标元素滚动到可见位置
+            address_frame.evaluate(f"""() => {{
+                const el = document.querySelector('{selector}');
+                if (el) el.scrollIntoView({{block: 'center', behavior: 'instant'}});
+            }}""")
+            time.sleep(0.3)
+            address_iframe_el.scroll_into_view_if_needed()
+            time.sleep(0.2)
+            cur_box = address_iframe_el.bounding_box()
+            if not cur_box:
+                logger.warning(f"[Checkout] iframe box 不可用")
+                return False
+            el_rect = address_frame.evaluate(f"""() => {{
+                const el = document.querySelector('{selector}');
+                if (!el) return null;
+                const r = el.getBoundingClientRect();
+                return {{x: r.x + r.width / 2, y: r.y + r.height / 2}};
+            }}""")
+            if not el_rect:
+                logger.warning(f"[Checkout] 地址-{label} 不存在: {selector}")
+                return False
+            abs_x = cur_box["x"] + el_rect["x"]
+            abs_y = cur_box["y"] + el_rect["y"]
+            # 验证坐标在 iframe 范围内
+            if abs_y < cur_box["y"] or abs_y > cur_box["y"] + cur_box["height"]:
+                logger.warning(f"[Checkout] 地址-{label} 坐标 ({abs_x:.0f},{abs_y:.0f}) 超出 iframe 边界, 尝试 focus+keyboard")
+                address_frame.evaluate(f"""() => {{
+                    const el = document.querySelector('{selector}');
+                    if (el) el.focus();
+                }}""")
+                time.sleep(0.2)
+            else:
+                page.mouse.click(abs_x, abs_y)
+                time.sleep(0.3)
+            page.keyboard.press("Control+a")
+            page.keyboard.press("Backspace")
+            time.sleep(0.1)
+            page.keyboard.type(value, delay=random.randint(40, 80))
+            logger.info(f"[Checkout] 地址-{label}: {value[:30]}")
+            time.sleep(0.3)
+            return True
+
+        logger.info(f"[Checkout] 找到 Address iframe")
+
+        # Phase 1: 设置国家 (evaluate 方式)
+        try:
+            address_frame.evaluate("""(country) => {
+                const sel = document.querySelector('select[name="country"]');
+                if (sel) {
+                    const nativeSet = Object.getOwnPropertyDescriptor(
+                        window.HTMLSelectElement.prototype, 'value').set;
+                    nativeSet.call(sel, country);
+                    sel.dispatchEvent(new Event('change', {bubbles: true}));
+                }
+            }""", billing_country)
+            logger.info(f"[Checkout] 地址-国家: {billing_country}")
+            time.sleep(1.0)
+        except Exception as e:
+            logger.warning(f"[Checkout] 国家选择失败: {e}")
+
+        # Phase 2: 填写 name 和 addressLine1 (这两个在初始 visible 区域)
+        if billing_name:
+            _click_and_type('input[name="name"]', billing_name, "姓名")
+        if billing_line1:
+            _click_and_type('input[name="addressLine1"]', billing_line1, "地址")
+
+        # 关闭自动完成建议并等待 reflow (addressLine1 填写后 city/state/zip 显示)
+        page.keyboard.press("Escape")
+        time.sleep(1.5)
+
+        # Phase 3: 使用 evaluate 在 iframe 内部 JS 设置隐藏字段的值
+        # (这些字段在 iframe 内部不可见区域, 无法通过鼠标点击)
+        try:
+            address_frame.evaluate("""(data) => {
+                function setInput(name, value) {
+                    const el = document.querySelector('input[name="' + name + '"]');
+                    if (!el || !value) return;
+                    const nativeSet = Object.getOwnPropertyDescriptor(
+                        window.HTMLInputElement.prototype, 'value').set;
+                    nativeSet.call(el, value);
+                    el.dispatchEvent(new Event('focus', {bubbles: true}));
+                    el.dispatchEvent(new Event('input', {bubbles: true}));
+                    el.dispatchEvent(new Event('change', {bubbles: true}));
+                    el.dispatchEvent(new Event('blur', {bubbles: true}));
+                }
+                function setSelect(name, value) {
+                    const el = document.querySelector('select[name="' + name + '"]');
+                    if (!el || !value) return;
+                    const nativeSet = Object.getOwnPropertyDescriptor(
+                        window.HTMLSelectElement.prototype, 'value').set;
+                    nativeSet.call(el, value);
+                    el.dispatchEvent(new Event('change', {bubbles: true}));
+                    el.dispatchEvent(new Event('blur', {bubbles: true}));
+                }
+                if (data.city) setInput('locality', data.city);
+                if (data.state) setSelect('administrativeArea', data.state);
+                if (data.zip) setInput('postalCode', data.zip);
+            }""", {"city": billing_city, "state": billing_state, "zip": billing_zip})
+            if billing_city:
+                logger.info(f"[Checkout] 地址-城市: {billing_city}")
+            if billing_state:
+                logger.info(f"[Checkout] 地址-州: {billing_state}")
+            if billing_zip:
+                logger.info(f"[Checkout] 地址-邮编: {billing_zip}")
+            time.sleep(0.5)
+        except Exception as e:
+            logger.warning(f"[Checkout] 隐藏字段设置失败: {e}")
+
+    def run_chatgpt_checkout(
+        self,
+        checkout_session_id: str,
+        session_token: str,
+        device_id: str,
+        card_number: str,
+        card_exp_month: str,
+        card_exp_year: str,
+        card_cvc: str,
+        billing_name: str,
+        billing_country: str,
+        billing_zip: str,
+        billing_line1: str = "",
+        billing_city: str = "",
+        billing_state: str = "",
+        timeout: int = 120,
+    ) -> dict:
+        """
+        通过 ChatGPT 内置 checkout 页面完成支付。
+        导航到 https://chatgpt.com/checkout/openai_llc/{cs_id},
+        自动填写 Stripe 卡片信息并提交。
+        """
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError:
+            return {"success": False, "error": "playwright not installed"}
+
+        checkout_url = f"https://chatgpt.com/checkout/openai_llc/{checkout_session_id}"
+        logger.info(f"[Checkout] 导航到 ChatGPT checkout: {checkout_url[:80]}...")
+
+        with sync_playwright() as p:
+            chrome_path = self._find_chrome_binary()
+            cdp_port = random.randint(9300, 9400)
+            user_data_dir = f"/tmp/cdp-checkout-{cdp_port}"
+
+            import shutil
+            if os.path.exists(user_data_dir):
+                shutil.rmtree(user_data_dir, ignore_errors=True)
+
+            chrome_args = [
+                chrome_path,
+                f"--remote-debugging-port={cdp_port}",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--disable-extensions",
+                "--disable-background-networking",
+                "--disable-sync",
+                "--window-size=1366,900",
+                f"--user-data-dir={user_data_dir}",
+                "--use-gl=angle",
+                "--use-angle=swiftshader-webgl",
+                "--enable-unsafe-swiftshader",
+            ]
+            if self.proxy:
+                chrome_args.append(f"--proxy-server={self.proxy}")
+            chrome_args.append("about:blank")
+
+            logger.info(f"[Checkout] 启动 Chrome (CDP port={cdp_port})...")
+            chrome_proc = subprocess.Popen(
+                chrome_args,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+
+            import urllib.request
+            cdp_url = f"http://127.0.0.1:{cdp_port}"
+            for attempt in range(20):
+                try:
+                    resp = urllib.request.urlopen(f"{cdp_url}/json/version", timeout=2)
+                    version_info = json.loads(resp.read())
+                    logger.info(f"[Checkout] Chrome ready: {version_info.get('Browser', 'unknown')}")
+                    break
+                except Exception:
+                    time.sleep(0.5)
+            else:
+                chrome_proc.terminate()
+                return {"success": False, "error": "Chrome CDP not responding"}
+
+            try:
+                browser = p.chromium.connect_over_cdp(cdp_url)
+                context = browser.contexts[0]
+
+                # 设置 ChatGPT session cookie
+                context.add_cookies([
+                    {
+                        "name": "__Secure-next-auth.session-token",
+                        "value": session_token,
+                        "domain": ".chatgpt.com",
+                        "path": "/",
+                        "httpOnly": True,
+                        "secure": True,
+                        "sameSite": "Lax",
+                    },
+                    {
+                        "name": "oai-did",
+                        "value": device_id,
+                        "domain": ".chatgpt.com",
+                        "path": "/",
+                        "httpOnly": False,
+                        "secure": True,
+                        "sameSite": "Lax",
+                    },
+                ])
+
+                page = context.new_page()
+                page.set_default_timeout(timeout * 1000)
+
+                # Step 1: 先访问 chatgpt.com 通过 Cloudflare
+                logger.info("[Checkout] 通过 Cloudflare...")
+                page.goto("https://chatgpt.com/", wait_until="domcontentloaded", timeout=60000)
+                for _cf_wait in range(15):
+                    time.sleep(2)
+                    _title = page.title()
+                    if "请稍候" not in _title and "Just a moment" not in _title:
+                        logger.info(f"[Checkout] Cloudflare 已通过 ({(_cf_wait+1)*2}s)")
+                        break
+                time.sleep(1)
+
+                # Step 2: 导航到 checkout 页面
+                logger.info(f"[Checkout] 加载 checkout 页面...")
+                page.goto(checkout_url, wait_until="domcontentloaded", timeout=60000)
+
+                # 等待 Stripe Payment Element 加载 (React SPA 需要时间)
+                logger.info("[Checkout] 等待 Stripe Payment Element...")
+                stripe_loaded = False
+                for _pe_wait in range(20):
+                    time.sleep(2)
+                    _iframes = page.query_selector_all('iframe[name*="__privateStripeFrame"]')
+                    _visible = [el for el in _iframes if (el.bounding_box() or {}).get("height", 0) > 30]
+                    if len(_visible) >= 1:
+                        logger.info(f"[Checkout] Stripe Element 已加载 ({(_pe_wait+1)*2}s, {len(_visible)} 可见)")
+                        stripe_loaded = True
+                        break
+                time.sleep(2)
+
+                if not stripe_loaded:
+                    body_text = page.evaluate("document.body ? document.body.innerText.substring(0, 300) : ''")
+                    logger.warning(f"[Checkout] Stripe 未加载, 页面: {body_text[:200]}")
+                    return {"success": False, "error": "Stripe Payment Element 未加载"}
+
+                # 模拟人类行为
+                self._simulate_human_behavior(page)
+
+                # 填写卡片信息
+                logger.info("[Checkout] 填写卡片信息...")
+                self._fill_stripe_elements(page, card_number, card_exp_month, card_exp_year, card_cvc)
+                time.sleep(1)
+
+                # 填写账单地址 (在 Stripe Address Element iframe 中)
+                logger.info("[Checkout] 填写账单地址...")
+                self._fill_stripe_address(page, billing_name, billing_line1, billing_zip, billing_country,
+                                         billing_city=billing_city, billing_state=billing_state)
+                time.sleep(1)
+
+                # 查找并点击提交按钮
+                logger.info("[Checkout] 查找提交按钮...")
+                submit_btn = None
+                for btn_selector in [
+                    'button[type="submit"]',
+                    'button:has-text("Subscribe")',
+                    'button:has-text("订阅")',
+                    'button:has-text("Pay")',
+                    'button:has-text("支付")',
+                    'button:has-text("Confirm")',
+                    '[data-testid="checkout-submit"]',
+                    '.SubmitButton',
+                ]:
+                    try:
+                        el = page.query_selector(btn_selector)
+                        if el and el.is_visible():
+                            submit_btn = el
+                            logger.info(f"[Checkout] 找到提交按钮: {btn_selector}")
+                            break
+                    except Exception:
+                        continue
+
+                if not submit_btn:
+                    logger.warning("[Checkout] 未找到提交按钮，尝试通用查找...")
+                    buttons = page.query_selector_all('button')
+                    for btn in buttons:
+                        text = btn.inner_text().strip().lower()
+                        if any(kw in text for kw in ("subscri", "pay", "confirm", "submit", "订阅", "支付", "确认")):
+                            submit_btn = btn
+                            logger.info(f"[Checkout] 找到按钮: '{btn.inner_text().strip()}'")
+                            break
+
+                if submit_btn:
+                    submit_btn.click()
+                    logger.info("[Checkout] 已点击提交按钮")
+                else:
+                    return {"success": False, "error": "未找到提交按钮"}
+
+                # 等待处理结果
+                logger.info("[Checkout] 等待支付处理...")
+
+                # hCaptcha 检测与点击
+                hcaptcha_clicked = False
+                for check_round in range(12):  # 最多 60 秒
+                    time.sleep(5)
+
+                    # 检查是否有 hCaptcha
+                    if not hcaptcha_clicked:
+                        try:
+                            clicked = self._try_click_hcaptcha(page)
+                            if clicked:
+                                hcaptcha_clicked = True
+                                logger.info("[Checkout] hCaptcha 已点击")
+                        except Exception:
+                            pass
+
+                    # 检查页面是否跳转到成功页面
+                    current_url = page.url
+                    if "subscribed=true" in current_url or "success" in current_url.lower():
+                        logger.info(f"[Checkout] ✅ 支付成功! URL: {current_url[:80]}")
+                        return {"success": True, "step": "complete", "url": current_url}
+
+                    # 检查 Stripe iframe 内的错误
+                    try:
+                        stripe_errors = []
+                        for frame in page.frames:
+                            if "stripe" not in frame.url.lower():
+                                continue
+                            frame_type = "payment" if "elements-inner-payment" in frame.url else \
+                                         "address" if "elements-inner-address" in frame.url else "other"
+                            try:
+                                errs = frame.query_selector_all('[class*="Error"], [role="alert"], .p-FieldError')
+                                for e_el in errs:
+                                    txt = e_el.inner_text().strip()
+                                    if txt:
+                                        stripe_errors.append(f"[{frame_type}] {txt}")
+                            except Exception:
+                                pass
+                        if stripe_errors and check_round == 0:
+                            logger.warning(f"[Checkout] Stripe 验证: {stripe_errors}")
+                    except Exception:
+                        pass
+
+                    # 检查页面文本是否有成功/失败指示
+                    try:
+                        body_text = page.evaluate("document.body.innerText.substring(0, 2000)")
+                        body_lower = body_text.lower()
+
+                        if any(kw in body_lower for kw in ("payment successful", "支付成功", "successfully subscribed", "welcome to")):
+                            logger.info("[Checkout] ✅ 支付成功 (页面文本)")
+                            return {"success": True, "step": "complete"}
+
+                        error_patterns = [
+                            ("card was declined", "银行卡被拒"),
+                            ("insufficient funds", "余额不足"),
+                            ("card_declined", "卡被拒绝"),
+                            ("资金不足", "资金不足"),
+                            ("银行卡资金不足", "余额不足"),
+                            ("your card was declined", "银行卡被拒"),
+                            ("expired card", "卡已过期"),
+                            ("was declined", "支付被拒"),
+                            ("decline", "支付被拒"),
+                            ("authentication_required", "需要验证"),
+                            ("payment failed", "支付失败"),
+                            ("无法处理", "无法处理"),
+                        ]
+                        for pattern, msg in error_patterns:
+                            if pattern in body_lower:
+                                logger.warning(f"[Checkout] ❌ 支付失败: {msg}")
+                                return {"success": False, "error": msg, "step": "payment_declined"}
+                    except Exception:
+                        pass
+
+                    logger.info(f"[Checkout] 等待中... ({(check_round + 1) * 5}s)")
+
+                return {"success": False, "error": "支付超时", "step": "timeout"}
+
+            except Exception as e:
+                logger.error(f"[Checkout] 异常: {e}")
+                return {"success": False, "error": str(e)}
+            finally:
+                try:
+                    browser.close()
+                except Exception:
+                    pass
+                try:
+                    chrome_proc.terminate()
+                    chrome_proc.wait(timeout=5)
+                except Exception:
+                    chrome_proc.kill()
+                import shutil
+                shutil.rmtree(user_data_dir, ignore_errors=True)
 
     def run_full_flow(
         self,
@@ -1083,6 +1542,8 @@ class BrowserPayment:
         billing_country: str,
         billing_zip: str,
         billing_line1: str = "",
+        billing_city: str = "",
+        billing_state: str = "",
         billing_email: str = "",
         billing_currency: str = "",
         chatgpt_proxy: str = None,
@@ -1122,12 +1583,12 @@ class BrowserPayment:
 
         logger.info(f"[Full Flow] cs_id: {cs_id[:30]}..., pk: {stripe_pk[:30]}...")
 
-        # Step 2: 浏览器中执行 Stripe 支付
-        logger.info("[Full Flow] Step 2: 浏览器 Stripe.js 支付...")
-        result = self.run_stripe_in_browser(
+        # Step 2: 浏览器 ChatGPT checkout 页面支付
+        logger.info("[Full Flow] Step 2: ChatGPT checkout 页面支付...")
+        result = self.run_chatgpt_checkout(
             checkout_session_id=cs_id,
-            client_secret=client_secret,
-            stripe_pk=stripe_pk,
+            session_token=session_token,
+            device_id=device_id,
             card_number=card_number,
             card_exp_month=card_exp_month,
             card_exp_year=card_exp_year,
@@ -1136,7 +1597,8 @@ class BrowserPayment:
             billing_country=billing_country,
             billing_zip=billing_zip,
             billing_line1=billing_line1,
-            billing_email=billing_email,
+            billing_city=billing_city,
+            billing_state=billing_state,
             timeout=timeout,
         )
 
