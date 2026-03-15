@@ -1,13 +1,14 @@
-# ChatGPT Business 自动开通
+# ChatGPT Business / Plus 自动开通
 
-全自动注册 ChatGPT 账号 + 开通 Business 套餐（首月免费），支持 Web UI 操作。
+全自动注册 ChatGPT 账号 + 开通 Business 或 Plus 套餐（首月免费），支持 Web UI 操作。
 
 ## 功能
 
 - **自动注册** — 临时邮箱创建、OTP 验证、账号注册一条龙
-- **首月免费** — 自动使用 `team-1-month-free` 促销码，首月 US$0.00
+- **首月免费** — Business (`team-1-month-free`) 或 Plus (`plus-1-month-free`)
 - **自动支付** — Xvfb + Chrome 自动填写 Stripe 表单、绕过 hCaptcha
 - **Web UI** — 粘贴卡片信息即可操作，支持选择已有账号或手动输入 Token
+- **计划选择** — 支持 Business (团队版 5席位 $0) 和 Plus (个人版 $0)
 
 ## 快速开始
 
@@ -47,10 +48,11 @@ streamlit run ui.py --server.port 8503 -- --dev
 
 ## Web UI 使用
 
-1. **选择账号来源**：新注册 / 选择已有账号 / 手动输入 Token
-2. **粘贴卡片信息**：支持键值对和纯文本格式自动识别
-3. **填写账单地址**：国家/姓名/地址/城市/州/邮编
-4. **点击执行**：进度条显示当前步骤，完成后显示结果
+1. **选择计划**: Business (团队版) 或 Plus (个人版)
+2. **选择账号来源**：新注册 / 选择已有账号 / 手动输入 Token
+3. **粘贴卡片信息**：支持键值对和纯文本格式自动识别
+4. **填写账单地址**：国家/姓名/地址/城市/州/邮编
+5. **点击执行**：进度条显示当前步骤，完成后显示结果
 
 ## 代码调用
 
@@ -89,8 +91,9 @@ result = bp.run_full_flow(
     billing_city="Springfield",
     billing_state="MO",
     billing_currency="USD",
-    workspace_name="MyWorkspace",
+    workspace_name="MyWorkspace",  # Business 模式下用
     chatgpt_proxy=cfg.proxy,
+    plan_type="plus",  # "team" 或 "plus"
 )
 print(f"Success: {result['success']}")
 ```

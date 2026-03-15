@@ -426,9 +426,22 @@ captcha_api_url = ""
 mail_worker = "https://apimail.mkai.de5.net"
 mail_domain = "mkai.de5.net"
 mail_token = "ma123999"
-workspace_name = "Artizancloud"
-seat_quantity = 5
-promo_campaign = "team-1-month-free"
+# 计划类型选择 (始终可见)
+plan_type_label = st.radio(
+    "选择计划",
+    ["💼 Business (团队版 免费试用 1 个月)", "⭐ Plus (个人版 免费试用 1 个月)"],
+    index=0,
+    horizontal=True,
+)
+plan_type = "plus" if "Plus" in plan_type_label else "team"
+if plan_type == "plus":
+    workspace_name = ""
+    seat_quantity = 0
+    promo_campaign = "plus-1-month-free"
+else:
+    workspace_name = "Artizancloud"
+    seat_quantity = 5
+    promo_campaign = "team-1-month-free"
 
 if dev_mode:
     with st.expander("⚙️ 高级设置", expanded=False):
@@ -465,15 +478,18 @@ if dev_mode:
                 captcha_api_url = st.text_input("打码 API", value="https://api.yescaptcha.com")
 
         st.markdown("---")
-        st.markdown("**📧 邮箱 & Team Plan**")
+        st.markdown("**📧 邮箱 & 计划设置**")
         mail_worker = st.text_input("邮箱 Worker", value="https://apimail.mkai.de5.net")
         adv_mc1, adv_mc2 = st.columns(2)
         mail_domain = adv_mc1.text_input("邮箱域名", value="mkai.de5.net")
         mail_token = adv_mc2.text_input("邮箱 Token", value="ma123999", type="password")
-        adv_tc1, adv_tc2, adv_tc3 = st.columns(3)
-        workspace_name = adv_tc1.text_input("Workspace", value="Artizancloud")
-        seat_quantity = adv_tc2.number_input("席位数", min_value=2, max_value=50, value=5)
-        promo_campaign = adv_tc3.text_input("活动 ID", value="team-1-month-free")
+        if plan_type == "team":
+            adv_tc1, adv_tc2, adv_tc3 = st.columns(3)
+            workspace_name = adv_tc1.text_input("Workspace", value="Artizancloud")
+            seat_quantity = adv_tc2.number_input("席位数", min_value=2, max_value=50, value=5)
+            promo_campaign = adv_tc3.text_input("活动 ID", value="team-1-month-free")
+        else:
+            promo_campaign = st.text_input("活动 ID", value="plus-1-month-free")
 
 st.divider()
 
@@ -731,6 +747,7 @@ def _run_flow_thread(rd, cs):
                     billing_city=cs["address_city"], billing_state=cs["address_state"],
                     billing_email=auth_result.email, billing_currency=cs["currency"],
                     chatgpt_proxy=cfg.proxy, timeout=120,
+                    plan_type=cs["plan_type"],
                 )
                 rd["checkout_data"] = br.get("checkout_data")
                 rd["checkout_session_id"] = br.get("checkout_data", {}).get("checkout_session_id", "")
@@ -792,6 +809,7 @@ with tab_run:
             "proxy": proxy or None,
             "mail_domain": mail_domain, "mail_worker": mail_worker, "mail_token": mail_token,
             "workspace_name": workspace_name, "seat_quantity": seat_quantity, "promo_campaign": promo_campaign,
+            "plan_type": plan_type,
             "captcha_api_url": captcha_api_url, "captcha_key": captcha_key,
             "billing_name": billing_name, "country_code": country_code, "currency": currency,
             "address_line1": address_line1, "address_city": address_city,

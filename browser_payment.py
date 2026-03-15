@@ -42,7 +42,8 @@ class BrowserPayment:
                                 billing_country: str = "US",
                                 billing_currency: str = "USD",
                                 workspace_name: str = "Artizancloud",
-                                seat_quantity: int = 5) -> dict:
+                                seat_quantity: int = 5,
+                                plan_type: str = "team") -> dict:
         """
         用 ChatGPT API 创建 checkout session, 返回 checkout 数据。
         这一步必须走 ChatGPT API (需要认证)。
@@ -89,24 +90,38 @@ class BrowserPayment:
                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
             ),
         }
-        body = {
-            "plan_name": "chatgptteamplan",
-            "team_plan_data": {
-                "workspace_name": workspace_name,
-                "price_interval": "month",
-                "seat_quantity": seat_quantity,
-            },
-            "billing_details": {
-                "country": billing_country,
-                "currency": billing_currency,
-            },
-            "cancel_url": "https://chatgpt.com/#team-pricing",
-            "promo_campaign": {
-                "promo_campaign_id": "team-1-month-free",
-                "is_coupon_from_query_param": False,
-            },
-            "checkout_ui_mode": "custom",
-        }
+        if plan_type == "plus":
+            body = {
+                "plan_name": "chatgptplusplan",
+                "billing_details": {
+                    "country": billing_country,
+                    "currency": billing_currency,
+                },
+                "promo_campaign": {
+                    "promo_campaign_id": "plus-1-month-free",
+                    "is_coupon_from_query_param": False,
+                },
+                "checkout_ui_mode": "custom",
+            }
+        else:
+            body = {
+                "plan_name": "chatgptteamplan",
+                "team_plan_data": {
+                    "workspace_name": workspace_name,
+                    "price_interval": "month",
+                    "seat_quantity": seat_quantity,
+                },
+                "billing_details": {
+                    "country": billing_country,
+                    "currency": billing_currency,
+                },
+                "cancel_url": "https://chatgpt.com/#team-pricing",
+                "promo_campaign": {
+                    "promo_campaign_id": "team-1-month-free",
+                    "is_coupon_from_query_param": False,
+                },
+                "checkout_ui_mode": "custom",
+            }
         resp = session.post(
             "https://chatgpt.com/backend-api/payments/checkout",
             headers=headers,
@@ -1554,6 +1569,7 @@ class BrowserPayment:
         seat_quantity: int = 5,
         chatgpt_proxy: str = None,
         timeout: int = 120,
+        plan_type: str = "team",
     ) -> dict:
         """
         完整流程: API 创建 checkout -> 浏览器中执行 Stripe 支付
@@ -1578,6 +1594,7 @@ class BrowserPayment:
             billing_currency=billing_currency,
             workspace_name=workspace_name,
             seat_quantity=seat_quantity,
+            plan_type=plan_type,
         )
 
         cs_id = checkout_data.get("checkout_session_id", "")
