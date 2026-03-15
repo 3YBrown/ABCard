@@ -371,6 +371,12 @@ def init_logging():
     root.setLevel(logging.INFO)
     root.handlers = [h for h in root.handlers if not getattr(h, '_is_log_capture', False)]
     root.addHandler(handler)
+    # 同时输出到 stdout (systemd/journalctl 可读)
+    if not any(isinstance(h, logging.StreamHandler) and not getattr(h, '_is_log_capture', False) for h in root.handlers):
+        sh = logging.StreamHandler()
+        sh.setLevel(logging.INFO)
+        sh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s", "%H:%M:%S"))
+        root.addHandler(sh)
     logging.getLogger("watchdog").setLevel(logging.WARNING)
 
 

@@ -45,3 +45,4 @@ dev_tests/
 .DS_Store
 Thumbs.db
 *:Zone.Identifier
+xray_client.json

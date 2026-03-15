@@ -1513,7 +1513,7 @@ class BrowserPayment:
 
                 # hCaptcha 检测与点击
                 hcaptcha_clicked = False
-                for check_round in range(12):  # 最多 60 秒
+                for check_round in range(24):  # 最多 120 秒
                     time.sleep(5)
 
                     # 检查是否有 hCaptcha
@@ -1583,7 +1583,20 @@ class BrowserPayment:
                     except Exception:
                         pass
 
-                    logger.info(f"[Checkout] 等待中... ({(check_round + 1) * 5}s)")
+                    logger.info(f"[Checkout] 等待中... ({(check_round + 1) * 5}s) url={page.url[:60]}")
+
+                # 超时诊断
+                try:
+                    _final_url = page.url
+                    _final_body = page.evaluate("document.body ? document.body.innerText.substring(0, 500) : ''")
+                    logger.warning(f"[Checkout] 超时! URL={_final_url}")
+                    logger.warning(f"[Checkout] 超时! body={_final_body[:300]}")
+                    # 检查是否有未识别的 hCaptcha
+                    _hcaptcha_frames = [f for f in page.frames if "hcaptcha" in f.url.lower()]
+                    if _hcaptcha_frames:
+                        logger.warning(f"[Checkout] 超时时仍有 hCaptcha iframe ({len(_hcaptcha_frames)} 个)")
+                except Exception:
+                    pass
 
                 return {"success": False, "error": "支付超时", "step": "timeout"}
 
